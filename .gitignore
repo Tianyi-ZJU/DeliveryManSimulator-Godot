@@ -1,0 +1,14 @@
+# Godot editor and import caches
+.godot/
+*.uid
+
+# Local gdmcp runtime tooling
+.gdmcp/
+
+# Local export artifacts; publish these through a release instead of source Git
+*.exe
+*.pck
+
+# Generated screenshots and import sidecars
+tests/*.png
+tests/*.png.import
