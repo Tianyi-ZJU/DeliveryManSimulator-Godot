@@ -14,10 +14,11 @@ func _init() -> void:
 	call_deferred("run")
 
 func reset() -> void:
+	game.notifications.clear()
 	game.orders.clear()
 	game.tasks.clear()
 	game.courier_route.clear()
-	game.wait_order.clear()
+	game.wait_order = {}
 	game.occupied = 0
 	game.money = 100
 	game.clock_minutes = 600
@@ -46,6 +47,17 @@ func run() -> void:
 	check(game.runtime_waypoints.size() == 30, "Authored visual waypoint data loads")
 	check(game.courier_pos == Vector2(-24.7, -39.8), "Shipping Unity courier spawn")
 	check(game.visual_road_graph.loaded, "Visual road mask loads for runtime routing")
+	# All shipping capacities must fit the padded backpack panel without overlap.
+	var bag_inner := Rect2(956, 24, 308, 73)
+	for bag_capacity in [3, 4, 5]:
+		var bag_fits := true
+		for slot_index in range(bag_capacity):
+			var slot: Rect2 = game._inventory_slot_rect(slot_index)
+			bag_fits = bag_fits and bag_inner.encloses(slot)
+			for previous_index in range(slot_index):
+				bag_fits = bag_fits and not slot.intersects(game._inventory_slot_rect(previous_index))
+		check(bag_fits, "Backpack capacity %d stays inside the HUD with no overlapping slots" % bag_capacity)
+	check(game._inventory_slot_rect(0).position.x == game._inventory_slot_rect(1).position.x and game._inventory_slot_rect(4).position.y == game._inventory_slot_rect(0).position.y, "Backpack fills vertically in two rows as in the Unity prefab")
 	for runtime_point in game.runtime_waypoints:
 		var runtime_position := Vector2(float(runtime_point["x"]), float(runtime_point["y"]))
 		check(game.visual_road_graph.is_world_point_near_road(runtime_position, 0.1), "Authored waypoint leaves painted road: " + str(runtime_point["id"]))
@@ -92,6 +104,26 @@ func run() -> void:
 	var fourth: Dictionary = game.create_order(29, 4, 1, 40)
 	game._accept_order_at(fourth["from"])
 	check(game.occupied == 3 and fourth["state"] == "available", "Full capacity refuses fourth order")
+	reset()
+	game.upgrades_remaining["capacity"] = 2
+	game.money = 400
+	game._show_upgrade()
+	game._purchase("capacity")
+	check(game.capacity == 4 and game.money == 300, "First bag upgrade unlocks a fourth slot")
+	game._purchase("capacity")
+	check(game.capacity == 5 and game.money == 200 and game.upgrades_remaining["capacity"] == 0, "Second bag upgrade unlocks a fifth slot")
+	game._start_next_day()
+	await process_frame
+	check(game.capacity == 5 and game.occupied == 0, "Next day keeps all five unlocked slots and clears occupancy")
+	var bag_orders: Array[Dictionary] = []
+	for pickup_id in [3, 5, 10, 14, 17, 18]:
+		var bag_order: Dictionary = game.create_order(pickup_id, 21, 1, 40)
+		game._accept_order_at(bag_order["from"])
+		bag_orders.append(bag_order)
+	check(game.occupied == 5 and game.tasks.size() == 10 and bag_orders[5]["state"] == "available", "Five-slot backpack accepts five orders and refuses the sixth")
+	game.clock_minutes = 781
+	game._update_orders(0.0)
+	check(game.occupied == 0 and game.tasks.is_empty(), "Cancellation releases every occupied slot of an upgraded backpack")
 	reset()
 	first = game.create_order(14, 21, 1, 46)
 	game._accept_order_at(first["from"])
@@ -155,6 +187,90 @@ func run() -> void:
 	game._process(0.1)
 	check(absf(game.speed_energy - (19.5 + 0.1 / 3.0)) < 0.001, "Shift drain and recharge match Unity")
 	Input.action_release("speed_up")
+	reset()
+	# Unity GeneratorManager cuts off new orders at 19:00. GamingCanvasBehaviour
+	# permits Space once the database is empty, or automatically settles at 21:00.
+	game.clock_minutes = 1139
+	game.generated_timer = 0.0
+	game._process(0.0)
+	check(not game.orders.is_empty(), "Orders still refresh at 18:59")
+	reset()
+	game.clock_minutes = 1140
+	game.generated_timer = 0.0
+	game._process(0.0)
+	check(game.orders.is_empty() and not game.upgrade_visible, "19:00 stops new orders without automatically settling")
+	check(game.day_close_panel.visible and not game.task_scroll.visible, "Empty evening replaces the task list with the ready-to-settle card")
+	game.notifications.clear()
+	game._process(0.5)
+	check(game.day_close_panel.visible and game.notifications.active.is_empty(), "Settlement card remains visible without a separate closing notice")
+	game._unhandled_input(urge)
+	check(game.upgrade_visible and game.day == 1, "Space after 19:00 enters settlement without waiting until 21:00")
+	check(not game.day_close_panel.visible, "Settlement card closes before the upgrade screen opens")
+	var settlement_children: int = game.get_child_count()
+	game._request_day_settlement()
+	game._finish_day()
+	check(game.get_child_count() == settlement_children and game.day == 1, "Repeated settlement requests cannot duplicate overlays or skip upgrades")
+	var held_space := InputEventKey.new()
+	held_space.physical_keycode = KEY_SPACE
+	held_space.pressed = true
+	held_space.echo = true
+	game._unhandled_input(held_space)
+	check(game.day == 1 and game.upgrade_visible, "Holding Space does not also skip the upgrade screen")
+	game._start_next_day()
+	await process_frame
+	check(not game.day_close_panel.visible and game.task_scroll.visible and game.task_scroll.position.y == 148.0, "Next day restores the full-height order list")
+	reset()
+	game.clock_minutes = 1139
+	game._unhandled_input(urge)
+	check(not game.upgrade_visible, "Space cannot settle before 19:00")
+	game._request_day_settlement()
+	check(not game.upgrade_visible, "The settlement button follows the same cutoff guard as Space")
+	game.clock_minutes = 1140
+	first = game.create_order(14, 21, 1, 46)
+	game._update_ui()
+	game._unhandled_input(urge)
+	check(not game.upgrade_visible and not game.day_close_panel.visible, "Remaining available order leaves the settlement card hidden")
+	check(game.day_close_panel.get_node_or_null("ClosingOrders") == null, "The unwanted closing-orders panel is removed")
+	game._accept_order_at(first["from"])
+	game._update_ui()
+	game._unhandled_input(urge)
+	check(not game.upgrade_visible and not game.tasks.is_empty(), "Accepted order must finish before settling")
+	check(game.task_scroll.visible and game.task_scroll.position.y == 148.0 and game.task_scroll.size.y == 510.0, "Evening deliveries keep the original full-height task list")
+	check(not game.day_close_panel.visible and not game._can_settle_day(), "Unfinished evening delivery has no closing panel and cannot settle")
+	game.day_close_panel.settle_requested.emit()
+	check(not game.upgrade_visible, "A stale UI signal cannot discard an unfinished order")
+	game.clock_minutes = 1260
+	game._process(0.0)
+	check(not game.upgrade_visible, "21:00 automatic settlement also waits for unfinished orders")
+	reset()
+	game.clock_minutes = 1140
+	game.finished_count = 8
+	game.day_start_finished = 5
+	game.money = 220
+	game.day_start_money = 180
+	game._update_ui()
+	check(game.day_close_panel.completed_value.text == "3 单" and game.day_close_panel.income_value.text == "$40", "Closing summary shows this day's totals, not lifetime completion or account balance")
+	game.money = 158
+	game._update_ui()
+	check(game.day_close_panel.income_value.text == "-$22", "Net loss from penalties appears as a negative daily income")
+	game.day_close_panel.settle_button.pressed.emit()
+	check(game.upgrade_visible and not game.game_finished, "Clicking the card's button enters the upgrade screen")
+	game._start_next_day()
+	await process_frame
+	check(game.day_start_finished == 8 and game.day_start_money == 158, "Daily totals restart after upgrades without losing lifetime statistics")
+	reset()
+	game.clock_minutes = 1259
+	game._process(0.0)
+	check(not game.upgrade_visible, "An empty day does not auto-settle at 20:59")
+	reset()
+	game.clock_minutes = 1140
+	game.day = 5
+	game._update_ui()
+	check(game.day_close_panel.settle_button.text == "查看最终成绩", "Day five offers the final summary instead of a nonexistent day six upgrade")
+	game._unhandled_input(urge)
+	check(game.game_finished and not game.upgrade_visible, "Space on an empty fifth day opens the final summary")
+	game._restart_game()
+	await process_frame
 	reset()
 	for expected_day in range(1, 5):
 		game.clock_minutes = 1260

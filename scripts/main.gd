@@ -22,6 +22,7 @@ const CLOUDY_TEXTURE := "res://assets/cloudy.png"
 const RAINY_TEXTURE := "res://assets/rainy.png"
 const FOGGY_TEXTURE := "res://assets/foggy.png"
 const MAP_MARGIN := Rect2(0.0, 0.0, 1280.0, 675.0)
+const INVENTORY_PANEL := Rect2(940, 8, 340, 105)
 const CAMERA_CENTER := Vector2(10.0, 5.0)
 const CAMERA_HALF_HEIGHT := 50.0
 const VIEW_WORLD_MIN := CAMERA_CENTER - Vector2(CAMERA_HALF_HEIGHT * 1280.0 / 675.0, CAMERA_HALF_HEIGHT)
@@ -31,8 +32,12 @@ const RoadGraph := preload("res://scripts/road_graph.gd")
 const VisualRoadGraph := preload("res://scripts/visual_road_graph.gd")
 const HUD_FONT := preload("res://assets/LiberationSans.ttf")
 const EndRating := preload("res://scripts/end_rating.gd")
+const GameAudio := preload("res://scripts/game_audio.gd")
+const DayClosePanel := preload("res://scripts/day_close_panel.gd")
+const NotificationCenter := preload("res://scripts/notification_center.gd")
 var road_graph := RoadGraph.new()
 var visual_road_graph := VisualRoadGraph.new()
+var game_audio: GameAudio
 
 var map_data: Dictionary = {}
 var waypoints: Array = []
@@ -71,6 +76,8 @@ var slow_energy_max := 15.0
 var upgrades_remaining := {"speed": 2, "capacity": 2, "speed_energy": 2, "slow_energy": 2}
 var purchases_left := 2
 var finished_count := 0
+var day_start_finished := 0
+var day_start_money := 100
 var late_count := 0
 var failed_count := 0
 var wait_order: Dictionary = {}
@@ -87,8 +94,6 @@ var courier_target_kind := ""
 var courier_route: Array[Vector2] = []
 var courier_route_index := 0
 var generated_timer := 3.0
-var notification := "点击餐厅图标接单"
-var notification_timer := 4.0
 var last_result := ""
 var upgrade_visible := false
 var game_finished := false
@@ -104,9 +109,16 @@ var time_label: Label
 var stats_label: Label
 var weather_label: Label
 var task_box: VBoxContainer
-var notification_label: Label
+var task_scroll: ScrollContainer
+var day_close_panel: DayClosePanel
+var notifications: NotificationCenter
+var upgrade_money_label: Label
+var upgrade_purchase_label: Label
+var upgrade_next_day: Button
+var upgrade_buttons: Dictionary = {}
 var upgrade_panel: Panel
 var hud_layer: Control
+var hud_theme: Theme
 var money_label: Label
 var weather_value_label: Label
 var energy_label: Label
@@ -138,10 +150,14 @@ func _ready() -> void:
 	foggy_texture = load(FOGGY_TEXTURE)
 	road_graph.build(map_data)
 	visual_road_graph.load_mask()
+	game_audio = GameAudio.new()
+	game_audio.name = "GameAudio"
+	add_child(game_audio)
+	game_audio.play_day(day)
 	courier_pos = Vector2(-24.7, -39.8)
 	_choose_weather()
 	_build_ui()
-	_set_notification("点击带黄色标记的餐厅接单")
+	_announce_day()
 	queue_redraw()
 
 func _runtime_waypoint(point_id: int) -> Dictionary:
@@ -161,7 +177,7 @@ func _choose_weather() -> void:
 func _build_ui() -> void:
 	hud_layer = Control.new()
 	hud_layer.name = "OriginalStyleHUD"
-	var hud_theme := Theme.new()
+	hud_theme = Theme.new()
 	hud_theme.default_font = HUD_FONT
 	hud_layer.theme = hud_theme
 	hud_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -207,7 +223,7 @@ func _build_ui() -> void:
 	weather_label = Label.new()
 	weather_label.visible = false
 	hud_layer.add_child(weather_label)
-	var task_scroll := ScrollContainer.new()
+	task_scroll = ScrollContainer.new()
 	task_scroll.name = "TaskScroll"
 	task_scroll.position = Vector2(960, 148)
 	task_scroll.size = Vector2(320, 510)
@@ -219,13 +235,23 @@ func _build_ui() -> void:
 	task_box.add_theme_constant_override("separation", 12)
 	task_box.mouse_filter = Control.MOUSE_FILTER_PASS
 	task_scroll.add_child(task_box)
-	notification_label = Label.new()
-	notification_label.name = "Notification"
-	notification_label.position = Vector2(24, 627)
-	notification_label.size = Vector2(900, 36)
-	notification_label.add_theme_font_size_override("font_size", 16)
-	notification_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
-	hud_layer.add_child(notification_label)
+	# Notices remain legible over upgrade/end overlays without capturing map input.
+	var notice_layer := CanvasLayer.new()
+	notice_layer.name = "Notifications"
+	notice_layer.layer = 20
+	add_child(notice_layer)
+	notifications = NotificationCenter.new()
+	notifications.name = "NotificationCenter"
+	notifications.theme = hud_theme
+	notifications.position = Vector2(24, 24)
+	notifications.size = Vector2(280, 627)
+	notice_layer.add_child(notifications)
+	day_close_panel = DayClosePanel.new()
+	day_close_panel.name = "DayClosePanel"
+	day_close_panel.position = Vector2(960, 148)
+	day_close_panel.size = Vector2(300, 496)
+	day_close_panel.settle_requested.connect(_request_day_settlement)
+	hud_layer.add_child(day_close_panel)
 
 func _process(delta: float) -> void:
 	if upgrade_visible or game_finished:
@@ -235,22 +261,26 @@ func _process(delta: float) -> void:
 	if Input.is_action_pressed("time_slow") and slow_energy > 0.0:
 		time_factor = 0.2
 		slow_energy = maxf(0.0, slow_energy - delta * 10.0 * time_factor)
+	game_audio.update_music_pitch(time_factor < 1.0, delta)
 	slow_energy = minf(slow_energy_max, slow_energy + delta * time_factor * 0.15)
 	clock_accumulator += delta * time_factor
 	while clock_accumulator >= minute_seconds:
 		clock_accumulator -= minute_seconds
 		clock_minutes += 1
-		if clock_minutes >= 21 * 60 and tasks.is_empty() and orders.is_empty():
+		if clock_minutes >= 21 * 60 and _can_settle_day():
 			_finish_day()
 			return
 	if Input.is_action_pressed("speed_up") and speed_energy > 0.0 and not courier_route.is_empty():
 		speed_energy = maxf(0.0, speed_energy - delta * 5.0 * time_factor)
 	speed_energy = minf(speed_energy_max, speed_energy + delta * time_factor * 20.0 / 60.0)
 	if not wait_order.is_empty() and clock_minutes >= wait_until:
-		wait_order.clear()
-		_set_notification("餐厅出餐了，继续送达")
+		# This is a reference to an order stored in orders/tasks; detach it rather
+		# than clearing the shared Dictionary and erasing that order's fields.
+		wait_order = {}
+		game_audio.play_cue(&"pickup")
+		_notify(&"food_ready")
 	_update_orders(delta * time_factor)
-	if clock_minutes >= 21 * 60 and tasks.is_empty() and orders.is_empty():
+	if clock_minutes >= 21 * 60 and _can_settle_day():
 		_finish_day()
 		return
 	_update_courier(delta * time_factor)
@@ -264,8 +294,6 @@ func _process(delta: float) -> void:
 			_generate_order()
 		var intervals: Array = [3.7, 3.2, 3.0, 2.8, 2.5] if peak else [5.0, 4.6, 4.2, 3.9, 3.6]
 		generated_timer = float(intervals[round_index]) + randf_range(-0.7, 0.7)
-	if notification_timer > 0.0:
-		notification_timer -= delta
 	_update_ui()
 	queue_redraw()
 
@@ -276,14 +304,16 @@ func _update_orders(delta: float) -> void:
 			if order["accept_timer"] <= 0.0:
 				if int(order["level"]) == 4:
 					money -= int(order["price"])
+					game_audio.play_cue(&"late")
+					_notify(&"assigned_missed", {"amount": int(order["price"])})
 				orders.erase(order)
-				_set_notification("有一笔订单因等待接单超时消失")
 		elif order["state"] == "accepted" or order["state"] == "picked_up":
 			if clock_minutes > order["deadline"] and not order["late"]:
 				order["late"] = true
 				money -= int(order["price"] / 2)
 				late_count += 1
-				_set_notification("订单超时，收入减少")
+				game_audio.play_cue(&"late")
+				_notify(&"late", {"amount": int(order["price"] / 2)})
 			if clock_minutes > int(order["deadline"]) + int(order["duration"]) / 2:
 				money -= int(order["price"]) * (2 if int(order["level"]) == 4 else 1)
 				occupied = maxi(0, occupied - 1)
@@ -294,11 +324,13 @@ func _update_orders(delta: float) -> void:
 				if courier_target == int(order["from"]["id"]) or courier_target == int(order["to"]["id"]):
 					courier_route.clear()
 				if wait_order == order:
-					wait_order.clear()
+					wait_order = {}
 				orders.erase(order)
-				_set_notification("订单严重超时，已取消并释放背包")
+				_notify(&"cancelled", {"amount": int(order["price"]) * (2 if int(order["level"]) == 4 else 1)})
 
 func _update_courier(delta: float) -> void:
+	var moving := wait_order.is_empty() and not courier_route.is_empty() and courier_route_index < courier_route.size()
+	game_audio.set_boost_active(moving and Input.is_action_pressed("speed_up") and speed_energy > 0.0)
 	if not wait_order.is_empty():
 		return
 	if courier_route.is_empty() or courier_route_index >= courier_route.size():
@@ -351,7 +383,6 @@ func _generate_order() -> void:
 	var price := randi_range(int(price_range[0]), int(price_range[1])) + weather_price_bonus
 	var duration: int = [120, randi_range(105, 119), randi_range(90, 104), 105, randi_range(100, 114)][level - 1]
 	create_order(int(pair[0]["id"]), int(pair[1]["id"]), level, price, duration)
-	_set_notification("新订单：点击餐厅或住宅图标接单")
 
 func create_order(from_id: int, to_id: int, level: int, price: int, duration: int = 120, color_index: int = -1) -> Dictionary:
 	var lifetime := 4.0 if weather == "雾天" else (2.3 if weather == "多云" else 3.0)
@@ -372,6 +403,10 @@ func create_order(from_id: int, to_id: int, level: int, price: int, duration: in
 	var order: Dictionary = {"id": next_order_id, "from": _runtime_waypoint(from_id), "to": _runtime_waypoint(to_id), "level": level, "price": price, "state": "available", "accept_timer": lifetime, "lifetime": lifetime, "deadline": clock_minutes + duration, "duration": duration, "accepted_at": clock_minutes, "late": false, "color_index": color_index}
 	next_order_id += 1
 	orders.append(order)
+	if level == 4:
+		notifications.introduce(&"assigned_intro")
+	elif level == 5:
+		notifications.introduce(&"hot_intro")
 	return order
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -387,9 +422,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("urge"):
 		if not wait_order.is_empty():
 			wait_until -= 2
-			_set_notification("已催餐，等待减少 2 分钟")
-		elif clock_minutes >= 19 * 60 and orders.is_empty():
-			_finish_day()
+			game_audio.play_cue(&"late")
+			_notify(&"urged")
+			notifications.set_waiting(maxi(0, wait_until - clock_minutes))
+		else:
+			_request_day_settlement()
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		for order in orders:
 			for kind in ["from", "to"]:
@@ -408,32 +445,33 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _accept_order_at(point: Dictionary) -> void:
 	if occupied >= capacity:
-		_set_notification("容量已满，请先完成一单或升级背包")
+		_notify(&"full_bag")
 		return
 	for order in orders:
 		if order["state"] == "available" and int(order["from"]["id"]) == int(point["id"]):
 			order["state"] = "accepted"
 			order["accepted_at"] = clock_minutes
+			game_audio.play_cue(&"accept")
 			occupied += 1
 			tasks.append({"order": order, "kind": "取餐"})
 			tasks.append({"order": order, "kind": "送达"})
 			_begin_next_task()
-			_set_notification("已接单：先取餐，再送达")
+			_notify(&"accepted", {"occupied": occupied, "capacity": capacity})
 			return
-	_set_notification("这里暂时没有可接订单")
+	_notify(&"no_order")
 
 func _prioritize(index: int) -> void:
 	if index <= 0 or index >= tasks.size():
 		return
 	var task: Dictionary = tasks[index]
 	if task["kind"] == "送达" and _has_unfinished_pickup(task["order"]):
-		_set_notification("必须先取餐，不能把送达排到取餐前")
+		_notify(&"pickup_first")
 		return
 	tasks.remove_at(index)
 	tasks.push_front(task)
 	courier_route.clear()
 	_begin_next_task()
-	_set_notification("任务已置顶")
+	_notify(&"sorted")
 
 func _move_task(from_index: int, to_index: int) -> bool:
 	if from_index < 0 or from_index >= tasks.size() or to_index < 0 or to_index >= tasks.size():
@@ -445,7 +483,7 @@ func _move_task(from_index: int, to_index: int) -> bool:
 		if reordered[i]["kind"] == "送达":
 			for j in range(i + 1, reordered.size()):
 				if reordered[j]["kind"] == "取餐" and reordered[j]["order"] == reordered[i]["order"]:
-					_set_notification("必须先取餐，再送达")
+					_notify(&"pickup_first")
 					return false
 	var previous_first: Dictionary = tasks[0]
 	tasks = reordered
@@ -453,6 +491,7 @@ func _move_task(from_index: int, to_index: int) -> bool:
 		courier_route.clear()
 		_begin_next_task()
 	_update_ui()
+	_notify(&"sorted")
 	return true
 
 func _task_gui_input(event: InputEvent, index: int) -> void:
@@ -462,6 +501,11 @@ func _task_gui_input(event: InputEvent, index: int) -> void:
 		task_dragged = false
 
 func _input(event: InputEvent) -> void:
+	if event.is_action_pressed("mute_audio"):
+		var muted := game_audio.toggle_mute()
+		_notify(&"audio", {"state": "声音已关闭" if muted else "声音已开启", "action": "关闭" if muted else "开启"})
+		get_viewport().set_input_as_handled()
+		return
 	# Capture release globally so dragging outside the original card also works.
 	if event is InputEventMouseMotion:
 		if task_drag_index >= 0 and event.global_position.distance_to(task_drag_origin) > 8.0:
@@ -519,14 +563,16 @@ func _arrive_at_target() -> void:
 	var order: Dictionary = task["order"]
 	if task["kind"] == "取餐":
 		order["state"] = "picked_up"
-		_set_notification("已取餐，正在前往客户")
 		var threshold := pickup_wait_probability(int(order["level"]))
 		if randi_range(0, 99) < threshold:
 			wait_order = order
 			wait_until = clock_minutes + 17 + 3 * (day - 1)
-			_set_notification("餐厅还没出餐，按空格催餐")
+		else:
+			game_audio.play_cue(&"pickup")
+			_notify(&"picked_up")
 	else:
 		order["state"] = "delivered"
+		game_audio.play_cue(&"delivery")
 		var level := int(order["level"])
 		var event_roll := randi_range(0, 99)
 		var late_probabilities: Array = [6, 25, 40, 70, 50]
@@ -539,7 +585,7 @@ func _arrive_at_target() -> void:
 		finished_count += 1
 		occupied = max(0, occupied - 1)
 		orders.erase(order)
-		_set_notification("已送达，收入 +$%d" % int(order["price"]))
+		_notify(&"delivered", {"amount": int(order["price"])})
 	courier_route.clear()
 	_begin_next_task()
 
@@ -547,7 +593,18 @@ func pickup_wait_probability(level: int) -> int:
 	var thresholds: Array = [[0, 0, 0, 0], [5, 7, 13, 2], [8, 12, 17, 4], [10, 14, 20, 5], [12, 15, 22, 6]][mini(day - 1, 4)]
 	return int(thresholds[mini(level - 1, 3)])
 
+func _can_settle_day() -> bool:
+	return not upgrade_visible and not game_finished and clock_minutes >= 19 * 60 and orders.is_empty() and tasks.is_empty() and wait_order.is_empty()
+
+func _request_day_settlement() -> void:
+	if not _can_settle_day():
+		return
+	_finish_day()
+	game_audio.play_cue(&"button")
+
 func _finish_day() -> void:
+	if not _can_settle_day():
+		return
 	if day >= 5:
 		_show_end()
 	else:
@@ -557,47 +614,214 @@ func _show_upgrade() -> void:
 	if upgrade_visible:
 		return
 	upgrade_visible = true
+	day_close_panel.hide()
+	notifications.clear()
+	game_audio.stop()
 	purchases_left = 2
 	var overlay := ColorRect.new()
 	overlay.name = "UpgradeOverlay"
-	overlay.color = Color(0.02, 0.04, 0.08, 0.92)
+	overlay.color = Color(0.02, 0.04, 0.08, 0.86)
 	overlay.size = MAP_MARGIN.size
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(overlay)
 	upgrade_panel = Panel.new()
 	upgrade_panel.name = "UpgradePanel"
-	upgrade_panel.position = Vector2(240, 190)
-	upgrade_panel.size = Vector2(480, 410)
+	upgrade_panel.position = Vector2(190, 58)
+	upgrade_panel.size = Vector2(900, 558)
+	upgrade_panel.theme = hud_theme
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.07, 0.10, 0.14, 0.98)
+	panel_style.border_color = Color(0.72, 0.76, 0.78, 0.36)
+	panel_style.set_border_width_all(1)
+	panel_style.set_corner_radius_all(22)
+	panel_style.shadow_color = Color(0.01, 0.02, 0.04, 0.38)
+	panel_style.shadow_size = 14
+	upgrade_panel.add_theme_stylebox_override("panel", panel_style)
 	add_child(upgrade_panel)
-	var box := VBoxContainer.new()
-	box.position = Vector2(28, 24)
-	box.size = Vector2(424, 180)
-	box.add_theme_constant_override("separation", 12)
-	upgrade_panel.add_child(box)
+	upgrade_buttons.clear()
+	var content := VBoxContainer.new()
+	content.name = "UpgradeContent"
+	content.position = Vector2(30, 24)
+	content.size = Vector2(840, 510)
+	content.add_theme_constant_override("separation", 12)
+	upgrade_panel.add_child(content)
+
+	var header := HBoxContainer.new()
+	header.name = "Header"
+	header.custom_minimum_size.y = 64
+	header.add_theme_constant_override("separation", 18)
+	content.add_child(header)
+	var heading := VBoxContainer.new()
+	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading.add_child(_upgrade_label("休息点 · 第 %d 天完成" % day, 14, Color("#aebbc7")))
+	heading.add_child(_upgrade_label("整备送餐车", 29, Color("#eef1ed")))
+	heading.add_child(_upgrade_label("选择升级后开始下一天", 13, Color("#8998a5")))
+	header.add_child(heading)
+	var status := PanelContainer.new()
+	status.name = "Status"
+	status.custom_minimum_size = Vector2(180, 58)
+	status.add_theme_stylebox_override("panel", _upgrade_style(Color(0.14, 0.19, 0.23, 0.9), Color(0.75, 0.78, 0.70, 0.25), 12))
+	var status_box := VBoxContainer.new()
+	status_box.add_theme_constant_override("separation", 2)
+	status_box.add_child(_upgrade_label("可用资金", 11, Color("#9eabb4")))
+	upgrade_money_label = _upgrade_label("", 21, Color("#e0df72"))
+	status_box.add_child(upgrade_money_label)
+	status.add_child(status_box)
+	header.add_child(status)
+
+	var stats := HBoxContainer.new()
+	stats.name = "DailyStats"
+	stats.add_theme_constant_override("separation", 10)
+	content.add_child(stats)
+	_upgrade_stat(stats, "今日送达", "%d 单" % (finished_count - day_start_finished))
+	var daily_net := money - day_start_money
+	var daily_net_text := ("-$%d" % -daily_net) if daily_net < 0 else ("$%d" % daily_net)
+	_upgrade_stat(stats, "今日净收入", daily_net_text)
+	_upgrade_stat(stats, "升级费用", "$100 / 项")
+
+	var section := HBoxContainer.new()
+	section.custom_minimum_size.y = 24
+	section.add_child(_upgrade_label("选择升级", 17, Color("#eef1ed")))
+	var section_spacer := Control.new()
+	section_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	section.add_child(section_spacer)
+	upgrade_purchase_label = _upgrade_label("", 13, Color("#aebbc7"))
+	section.add_child(upgrade_purchase_label)
+	content.add_child(section)
+
+	var grid := GridContainer.new()
+	grid.name = "UpgradeGrid"
+	grid.columns = 2
+	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 10)
+	content.add_child(grid)
+	_build_upgrade_option(grid, "speed", "速度", "更快抵达下一站", "当前 %.0f  ->  %.0f" % [courier_speed, courier_speed + 4.0])
+	_build_upgrade_option(grid, "capacity", "容量", "同时携带更多订单", "当前 %d  ->  %d 单" % [capacity, capacity + 1])
+	_build_upgrade_option(grid, "speed_energy", "加速能量", "延长加速可用时间", "当前 %.0f  ->  %.0f" % [speed_energy_max, speed_energy_max + 20.0])
+	_build_upgrade_option(grid, "slow_energy", "慢时能量", "更长时间观察路线", "当前 %.0f  ->  %.0f" % [slow_energy_max, slow_energy_max + 15.0])
+
+	var footer := HBoxContainer.new()
+	footer.name = "Footer"
+	footer.custom_minimum_size.y = 52
+	footer.add_theme_constant_override("separation", 12)
+	content.add_child(footer)
+	var hint := _upgrade_label("SPACE 也可直接开始下一天", 12, Color("#84929d"))
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	footer.add_child(hint)
+	upgrade_next_day = Button.new()
+	upgrade_next_day.name = "StartNextDay"
+	upgrade_next_day.custom_minimum_size = Vector2(240, 48)
+	upgrade_next_day.focus_mode = Control.FOCUS_NONE
+	upgrade_next_day.pressed.connect(_start_next_day)
+	_upgrade_button_style(upgrade_next_day, Color("#e0df72"), Color("#f1efa0"), Color("#c4c35e"), Color("#253343"))
+	footer.add_child(upgrade_next_day)
+	_refresh_upgrade_ui()
+	upgrade_panel.modulate.a = 0.0
+	upgrade_panel.create_tween().tween_property(upgrade_panel, "modulate:a", 1.0, 0.18)
+
+func _upgrade_style(background: Color, border: Color = Color.TRANSPARENT, radius: int = 12) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border
+	style.set_border_width_all(1 if border.a > 0.0 else 0)
+	style.set_corner_radius_all(radius)
+	return style
+
+func _upgrade_label(text: String, font_size: int, color: Color) -> Label:
 	var label := Label.new()
-	label.text = "日末升级 / 第 %d 天完成" % day
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 22)
-	box.add_child(label)
-	var info := Label.new()
-	info.text = "每项 $100，每天最多购买两项"
-	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(info)
-	for option in [{"text":"速度 +4", "type":"speed"}, {"text":"容量 +1", "type":"capacity"}, {"text":"加速能量 +20", "type":"speed_energy"}, {"text":"慢时能量 +15", "type":"slow_energy"}]:
-		var button := Button.new()
-		button.text = option["text"]
-		button.pressed.connect(_purchase.bind(option["type"]))
-		box.add_child(button)
-	var next_day := Button.new()
-	next_day.text = "开始下一天"
-	next_day.pressed.connect(_start_next_day)
-	box.add_child(next_day)
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+func _upgrade_stat(row: HBoxContainer, caption: String, value: String) -> void:
+	var stat := PanelContainer.new()
+	stat.custom_minimum_size = Vector2(0, 48)
+	stat.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stat.add_theme_stylebox_override("panel", _upgrade_style(Color(0.11, 0.15, 0.19, 0.8), Color(0.62, 0.68, 0.70, 0.18), 10))
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 1)
+	box.add_child(_upgrade_label(caption, 11, Color("#8998a5")))
+	box.add_child(_upgrade_label(value, 17, Color("#eef1ed")))
+	stat.add_child(box)
+	row.add_child(stat)
+
+func _build_upgrade_option(grid: GridContainer, kind: String, title: String, description: String, effect: String) -> void:
+	var card := PanelContainer.new()
+	card.name = "Option_" + kind
+	card.custom_minimum_size = Vector2(0, 108)
+	card.add_theme_stylebox_override("panel", _upgrade_style(Color(0.11, 0.15, 0.19, 0.92), Color(0.62, 0.68, 0.70, 0.22), 12))
+	var margin := MarginContainer.new()
+	margin.name = "OptionMargin"
+	for edge in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + edge, 12)
+	card.add_child(margin)
+	var box := VBoxContainer.new()
+	box.name = "OptionContent"
+	box.add_theme_constant_override("separation", 3)
+	margin.add_child(box)
+	box.add_child(_upgrade_label(title, 17, Color("#eef1ed")))
+	box.add_child(_upgrade_label(description, 12, Color("#9eabb4")))
+	var footer := HBoxContainer.new()
+	footer.name = "OptionFooter"
+	footer.add_theme_constant_override("separation", 8)
+	var effect_label := _upgrade_label(effect, 12, Color("#e0df72"))
+	effect_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	footer.add_child(effect_label)
+	var button := Button.new()
+	button.name = "Buy"
+	button.custom_minimum_size = Vector2(112, 30)
+	button.focus_mode = Control.FOCUS_NONE
+	button.pressed.connect(_purchase.bind(kind))
+	_upgrade_button_style(button, Color(0.22, 0.28, 0.31, 0.95), Color(0.30, 0.37, 0.40, 0.98), Color(0.17, 0.22, 0.25, 0.98), Color("#eef1ed"))
+	footer.add_child(button)
+	box.add_child(footer)
+	grid.add_child(card)
+	upgrade_buttons[kind] = button
+
+func _upgrade_button_style(button: Button, normal: Color, hover: Color, pressed: Color, text_color: Color) -> void:
+	button.add_theme_color_override("font_color", text_color)
+	button.add_theme_color_override("font_hover_color", text_color)
+	button.add_theme_color_override("font_pressed_color", text_color)
+	button.add_theme_color_override("font_disabled_color", Color(0.55, 0.59, 0.60, 0.65))
+	button.add_theme_stylebox_override("normal", _upgrade_style(normal, Color(0.70, 0.75, 0.74, 0.18), 8))
+	button.add_theme_stylebox_override("hover", _upgrade_style(hover, Color(0.80, 0.83, 0.70, 0.45), 8))
+	button.add_theme_stylebox_override("pressed", _upgrade_style(pressed, Color(0.80, 0.83, 0.70, 0.55), 8))
+	button.add_theme_stylebox_override("disabled", _upgrade_style(Color(0.12, 0.16, 0.18, 0.65), Color(0.46, 0.50, 0.50, 0.12), 8))
+
+func _refresh_upgrade_ui() -> void:
+	if not is_instance_valid(upgrade_panel):
+		return
+	if upgrade_money_label:
+		upgrade_money_label.text = "$%d" % money
+	if upgrade_purchase_label:
+		upgrade_purchase_label.text = "今日已用 %d / 2 次" % (2 - purchases_left)
+	if upgrade_next_day:
+		upgrade_next_day.text = "开始下一天" if purchases_left == 0 else "开始下一天 · 跳过 %d 次升级" % purchases_left
+	for kind in upgrade_buttons:
+		var button: Button = upgrade_buttons[kind]
+		var maxed := int(upgrades_remaining[kind]) <= 0
+		button.disabled = maxed or purchases_left <= 0
+		button.text = "已达上限" if maxed else ("购买  $100" if money >= 100 else "资金不足")
 
 func _purchase(kind: String) -> void:
-	if money < 100 or purchases_left <= 0 or int(upgrades_remaining[kind]) <= 0:
-		_set_notification("资金不足或升级次数已用完")
+	if not upgrade_visible:
+		return
+	if int(upgrades_remaining[kind]) <= 0:
+		_notify(&"max_upgrade")
+		return
+	if purchases_left <= 0:
+		_notify(&"purchases_used")
+		return
+	if money < 100:
+		_notify(&"funds", {"money": money})
 		return
 	money -= 100
 	purchases_left -= 1
+	game_audio.play_cue(&"button")
 	upgrades_remaining[kind] -= 1
 	if kind == "speed":
 		courier_speed += 4.0
@@ -608,13 +832,16 @@ func _purchase(kind: String) -> void:
 	else:
 		slow_energy_max += 15.0
 	_update_ui()
-	if purchases_left == 0:
-		_start_next_day()
+	_refresh_upgrade_ui()
+	var upgrade_names := {"speed": "速度 +4", "capacity": "容量 +1", "speed_energy": "加速能量 +20", "slow_energy": "慢时能量 +15"}
+	_notify(&"upgraded", {"upgrade": upgrade_names[kind]})
 
 func _start_next_day() -> void:
 	if game_finished or day >= 5:
 		return
 	day += 1
+	day_start_finished = finished_count
+	day_start_money = money
 	clock_minutes = 10 * 60
 	clock_accumulator = 0.0
 	orders.clear()
@@ -622,23 +849,28 @@ func _start_next_day() -> void:
 	occupied = 0
 	courier_pos = Vector2(-24.7, -39.8)
 	courier_route.clear()
-	wait_order.clear()
+	wait_order = {}
 	speed_energy = speed_energy_max
 	slow_energy = slow_energy_max
 	generated_timer = 3.0
 	_choose_weather()
+	game_audio.play_day(day)
 	upgrade_visible = false
 	if upgrade_panel:
 		var overlay := get_node_or_null("UpgradeOverlay")
 		if overlay: overlay.queue_free()
 		upgrade_panel.queue_free()
-	_set_notification("第 %d 天开始：%s" % [day, weather])
+	notifications.clear()
+	_announce_day()
 	_update_ui()
 
 func _show_end() -> void:
 	if game_finished:
 		return
 	game_finished = true
+	day_close_panel.hide()
+	notifications.clear()
+	game_audio.stop()
 	courier_route.clear()
 	end_panel = PanelContainer.new()
 	end_panel.name = "EndSummary"
@@ -680,11 +912,13 @@ func _restart_game() -> void:
 	upgrades_remaining = {"speed": 2, "capacity": 2, "speed_energy": 2, "slow_energy": 2}
 	purchases_left = 2
 	finished_count = 0
+	day_start_finished = 0
+	day_start_money = 100
 	late_count = 0
 	failed_count = 0
 	orders.clear()
 	tasks.clear()
-	wait_order.clear()
+	wait_order = {}
 	courier_route.clear()
 	courier_pos = Vector2(-24.7, -39.8)
 	next_order_id = 0
@@ -694,6 +928,9 @@ func _restart_game() -> void:
 	if is_instance_valid(end_panel):
 		end_panel.queue_free()
 	_choose_weather()
+	game_audio.play_day(day)
+	notifications.reset_introductions()
+	_announce_day()
 	_update_ui()
 
 func _update_ui() -> void:
@@ -706,7 +943,10 @@ func _update_ui() -> void:
 	time_label.text = ""
 	weather_value_label.text = weather
 	weather_label.text = "天气：%s 速度 %.0f%%" % [weather, weather_speed_factor * 100.0]
-	notification_label.text = notification if notification_timer > 0.0 else ""
+	notifications.set_waiting(maxi(0, wait_until - clock_minutes) if not wait_order.is_empty() and not upgrade_visible and not game_finished else -1)
+	_update_day_close_panel()
+	if upgrade_visible:
+		_refresh_upgrade_ui()
 	var signature_parts: Array[String] = []
 	for task in tasks:
 		signature_parts.append("%s:%d:%d:%d" % [task["kind"], int(task["order"]["id"]), int(task["order"]["price"]), int(task["order"]["deadline"])])
@@ -766,9 +1006,21 @@ func _update_ui() -> void:
 	_begin_next_task()
 	queue_redraw()
 
-func _set_notification(message: String) -> void:
-	notification = message
-	notification_timer = 3.0
+func _update_day_close_panel() -> void:
+	var ready := _can_settle_day()
+	task_scroll.visible = not ready
+	if not ready:
+		day_close_panel.hide()
+		return
+	day_close_panel.present(day, clock_minutes, finished_count - day_start_finished, money - day_start_money)
+
+func _notify(event: StringName, values: Dictionary = {}) -> void:
+	notifications.post(event, values)
+
+func _announce_day() -> void:
+	var weather_event: StringName = NotificationCenter.WEATHER_EVENTS[weather]
+	if not notifications.introduce(weather_event, {"day": day}):
+		_notify(&"day_started", {"day": day, "weather": weather})
 
 func _hover_task(order_id: int, kind: String) -> void:
 	hover_order_id = order_id
@@ -854,14 +1106,14 @@ func prepare_input_regression() -> void:
 	create_order(14, 21, 1, 46, 120, 1)
 	courier_pos = Vector2(-24.7, -35.0)
 	_update_ui()
-	notification_label.text = ""
+	notifications.clear()
 	queue_redraw()
 
 func prepare_visual_regression() -> void:
 	prepare_input_regression()
 	_accept_order_at(orders[0]["from"])
 	_update_ui()
-	notification_label.text = ""
+	notifications.clear()
 	queue_redraw()
 
 func regression_snapshot() -> Dictionary:
@@ -875,6 +1127,13 @@ func _draw_panel(rect: Rect2, background: Color, border: Color = Color(0.55, 0.5
 	style.set_corner_radius_all(radius)
 	draw_style_box(style, rect)
 
+func _inventory_slot_rect(index: int) -> Rect2:
+	# Unity's inventory GridLayoutGroup fixes two rows and fills vertically.
+	# Capacity upgrades therefore add columns within the existing HUD panel.
+	var column := floori(float(index) / 2.0)
+	var row := index % 2
+	return Rect2(967 + column * 38, 29 + row * 38, 30, 30)
+
 func _draw_original_hud() -> void:
 	var panel := Color(0.18, 0.21, 0.27, 0.78)
 	_draw_panel(Rect2(20, 14, 590, 62), panel, Color(0.52, 0.55, 0.60, 0.5), 28)
@@ -882,7 +1141,7 @@ func _draw_original_hud() -> void:
 	_draw_panel(Rect2(20, 170, 300, 60), panel, Color(0.52, 0.55, 0.60, 0.5), 28)
 	_draw_panel(Rect2(624, 14, 198, 62), panel, Color(0.52, 0.55, 0.60, 0.5), 28)
 	_draw_panel(Rect2(842, 14, 87, 62), panel, Color(0.52, 0.55, 0.60, 0.5), 28)
-	_draw_panel(Rect2(940, 8, 340, 105), panel, Color(0.52, 0.55, 0.60, 0.5), 28)
+	_draw_panel(INVENTORY_PANEL, panel, Color(0.52, 0.55, 0.60, 0.5), 28)
 	_draw_panel(Rect2(940, 130, 340, 537), Color(0.40, 0.43, 0.47, 0.32), Color(0.72, 0.75, 0.78, 0.55), 28)
 	# Original Unity HUD icons and resource bars.
 	if clock_texture:
@@ -926,5 +1185,5 @@ func _draw_original_hud() -> void:
 		draw_circle(Vector2(656, 45), 15, Color("#ffd200"))
 		draw_string(ThemeDB.fallback_font, Vector2(650, 52), "$", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color("#1d2530"))
 	for i in range(capacity):
-		var slot := Rect2(967 + (i % 2) * 38, 29 + (i / 2) * 38, 30, 30)
+		var slot := _inventory_slot_rect(i)
 		_draw_panel(slot, Color("#518da0") if i < occupied else Color("#a3a3a3"), Color.TRANSPARENT, 7)
