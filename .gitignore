@@ -1,6 +1,5 @@
 # Godot editor and import caches
 .godot/
-*.uid
 
 # Local gdmcp runtime tooling
 .gdmcp/
