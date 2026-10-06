@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="768" height="192" viewBox="0 0 768 192">
+  <defs><radialGradient id="mist"><stop stop-color="#d6e4e9" stop-opacity="0.8"/><stop offset="0.4" stop-color="#d6e4e9" stop-opacity="0.3"/><stop offset="1" stop-color="#d6e4e9" stop-opacity="0"/></radialGradient></defs>
+  <ellipse cx="342" cy="112" rx="330" ry="58" fill="url(#mist)"/>
+  <ellipse cx="236" cy="96" rx="220" ry="57" fill="url(#mist)"/>
+  <ellipse cx="540" cy="72" rx="209" ry="47" fill="url(#mist)"/>
+  <ellipse cx="462" cy="127" rx="248" ry="45" fill="url(#mist)"/>
+</svg>

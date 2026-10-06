@@ -4,6 +4,9 @@
 # Local gdmcp runtime tooling
 .gdmcp/
 
+# Local verification logs and scratch files
+tmp/
+
 # Local export artifacts; publish these through a release instead of source Git
 *.exe
 *.pck

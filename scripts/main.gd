@@ -35,9 +35,11 @@ const EndRating := preload("res://scripts/end_rating.gd")
 const GameAudio := preload("res://scripts/game_audio.gd")
 const DayClosePanel := preload("res://scripts/day_close_panel.gd")
 const NotificationCenter := preload("res://scripts/notification_center.gd")
+const WeatherAtmosphere := preload("res://scripts/weather_atmosphere.gd")
 var road_graph := RoadGraph.new()
 var visual_road_graph := VisualRoadGraph.new()
 var game_audio: GameAudio
+var weather_atmosphere := WeatherAtmosphere.new()
 
 var map_data: Dictionary = {}
 var waypoints: Array = []
@@ -168,11 +170,13 @@ func _choose_weather() -> void:
 		weather = "晴天"
 		weather_speed_factor = 1.0
 		weather_price_bonus = 0
+		weather_atmosphere.reset(weather)
 		return
 	var roll := randi_range(0, 99)
 	weather = "多云" if roll < 28 else ("雨天" if roll < 56 else ("雾天" if roll < 84 else "晴天"))
 	weather_speed_factor = 0.77 if weather == "雨天" else (0.88 if weather == "雾天" else 1.0)
 	weather_price_bonus = 17 if weather == "雨天" else 0
+	weather_atmosphere.reset(weather)
 
 func _build_ui() -> void:
 	hud_layer = Control.new()
@@ -254,6 +258,7 @@ func _build_ui() -> void:
 	hud_layer.add_child(day_close_panel)
 
 func _process(delta: float) -> void:
+	weather_atmosphere.set_running(not upgrade_visible and not game_finished)
 	if upgrade_visible or game_finished:
 		queue_redraw()
 		return
@@ -261,6 +266,8 @@ func _process(delta: float) -> void:
 	if Input.is_action_pressed("time_slow") and slow_energy > 0.0:
 		time_factor = 0.2
 		slow_energy = maxf(0.0, slow_energy - delta * 10.0 * time_factor)
+	weather_atmosphere.set_weather(weather)
+	weather_atmosphere.advance(delta * time_factor)
 	game_audio.update_music_pitch(time_factor < 1.0, delta)
 	slow_energy = minf(slow_energy_max, slow_energy + delta * time_factor * 0.15)
 	clock_accumulator += delta * time_factor
@@ -614,6 +621,7 @@ func _show_upgrade() -> void:
 	if upgrade_visible:
 		return
 	upgrade_visible = true
+	weather_atmosphere.set_running(false)
 	day_close_panel.hide()
 	notifications.clear()
 	game_audio.stop()
@@ -868,6 +876,7 @@ func _show_end() -> void:
 	if game_finished:
 		return
 	game_finished = true
+	weather_atmosphere.set_running(false)
 	day_close_panel.hide()
 	notifications.clear()
 	game_audio.stop()
@@ -1042,6 +1051,8 @@ func _draw() -> void:
 		var center := Vector2(9.2519, -9.3247)
 		var top_left := _world_to_screen(center + Vector2(-world_size.x, world_size.y) * 0.5)
 		draw_texture_rect(map_texture, Rect2(top_left, world_size * MAP_MARGIN.size.y / (2.0 * CAMERA_HALF_HEIGHT)), false)
+	if not upgrade_visible and not game_finished:
+		weather_atmosphere.draw_on(self)
 	if not courier_route.is_empty() and courier_route_index < courier_route.size():
 		var route_points := PackedVector2Array([_world_to_screen(courier_pos)])
 		for i in range(courier_route_index, courier_route.size()):

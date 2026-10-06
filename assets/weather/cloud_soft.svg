@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="192" viewBox="0 0 512 192">
+  <defs><linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#f2f6fb" stop-opacity="0.85"/><stop offset="0.6" stop-color="#e4edf6" stop-opacity="0.70"/><stop offset="1" stop-color="#cbdbe9" stop-opacity="0.48"/></linearGradient></defs>
+  <path d="M110 168 C73 168 44 146 44 116 C44 86 68 63 100 63 C114 63 127 68 138 76 C146 42 176 19 212 19 C249 19 279 42 286 75 C300 62 319 55 339 55 C369 55 394 75 401 102 C408 100 415 99 422 99 C449 99 470 114 470 135 C470 154 449 168 424 168 Z" fill="url(#cloud)"/>
+</svg>
