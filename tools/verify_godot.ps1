@@ -21,10 +21,14 @@ function Invoke-GodotCheck([string]$Name, [string[]]$CheckArguments) {
 
 & (Join-Path $PSScriptRoot 'set_version.ps1') -Check
 if ($ImportAssets) { Invoke-GodotCheck 'import' @('--import') }
-foreach ($scriptName in @('main', 'road_graph', 'visual_road_graph', 'game_audio', 'day_close_panel', 'notification_center', 'main_menu', 'weather_atmosphere')) {
-    Invoke-GodotCheck "parse-$scriptName" @('--check-only', '--script', "res://scripts/$scriptName.gd")
+foreach ($scriptFile in (Get-ChildItem -LiteralPath (Join-Path $projectPath 'scripts') -Filter '*.gd' -Recurse | Sort-Object FullName)) {
+    $relativePath = $scriptFile.FullName.Substring($projectPath.Length + 1).Replace('\', '/')
+    $checkName = 'parse-' + $relativePath.Replace('/', '-').Replace('.gd', '')
+    Invoke-GodotCheck $checkName @('--check-only', '--script', "res://$relativePath")
 }
 Invoke-GodotCheck 'weather' @('--script', 'res://tests/weather_regression_test.gd')
+Invoke-GodotCheck 'architecture' @('--script', 'res://tests/architecture_regression_test.gd')
+Invoke-GodotCheck 'playfab' @('--script', 'res://tests/playfab_regression_test.gd')
 Invoke-GodotCheck 'menu' @('--script', 'res://tests/menu_smoke_test.gd')
 Invoke-GodotCheck 'menu-exit' @('--script', 'res://tests/menu_smoke_test.gd', '--', '--test-exit')
 Invoke-GodotCheck 'smoke' @('--script', 'res://tests/smoke_test.gd')

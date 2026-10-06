@@ -4,6 +4,9 @@
 # Local gdmcp runtime tooling
 .gdmcp/
 
+# Machine-specific network settings
+.local/
+
 # Local verification logs and scratch files
 tmp/
 

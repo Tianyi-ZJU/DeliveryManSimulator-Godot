@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Delivery Man Simulator - Minimal Port"
-config/version="0.2.0"
+config/version="1.0.0"
 run/main_scene="res://scenes/MainMenu.tscn"
 boot_splash/show_image=false
 config/features=PackedStringArray("4.7")
@@ -19,6 +19,7 @@ config/features=PackedStringArray("4.7")
 [autoload]
 
 MCPRuntimeProbe="*uid://bsg12huaf1u5i"
+OnlineService="*res://scripts/online/playfab_client.gd"
 
 [audio]
 

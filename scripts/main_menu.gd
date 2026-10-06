@@ -13,6 +13,7 @@ const RESTAURANT_TEXTURE: Texture2D = preload("res://assets/restaurant.png")
 const LOCATION_BADGE_TEXTURE: Texture2D = preload("res://assets/menu_location_badge.svg")
 const MENU_MUSIC_PATH := "res://assets/audio/menu/menu.mp3"
 const BUTTON_SOUND_PATH := "res://assets/audio/menu/button.mp3"
+const Leaderboard := preload("res://scripts/online/leaderboard_controller.gd")
 
 const BASE_SIZE := Vector2(1280.0, 675.0)
 const SKY_ORIGIN := Vector2(-12.0, -8.0)
@@ -24,6 +25,8 @@ var music_player: AudioStreamPlayer
 var button_player: AudioStreamPlayer
 var start_button: Button
 var exit_button: Button
+var leaderboard_button: Button
+var leaderboard: Leaderboard
 var leaving_menu := false
 var road_camera: Camera3D
 var sky_layer: TextureRect
@@ -216,12 +219,22 @@ func _build_title() -> void:
 	title.size = Vector2(800.0, 68.0)
 
 func _build_buttons() -> void:
+	leaderboard_button = _make_button("RANKING", Vector2(1096.0, 488.0))
+	leaderboard_button.name = "LeaderboardButton"
+	leaderboard_button.pressed.connect(_on_leaderboard_pressed)
 	start_button = _make_button("START", Vector2(1096.0, 546.0))
 	start_button.name = "StartButton"
 	start_button.pressed.connect(_on_start_pressed)
 	exit_button = _make_button("EXIT", Vector2(1096.0, 604.0))
 	exit_button.name = "ExitButton"
 	exit_button.pressed.connect(_on_exit_pressed)
+
+func _on_leaderboard_pressed() -> void:
+	if leaving_menu or is_instance_valid(leaderboard):
+		return
+	_play_button_sound()
+	leaderboard = Leaderboard.new(get_node("/root/OnlineService"))
+	add_child(leaderboard)
 
 func _make_button(label: String, button_position: Vector2) -> Button:
 	var button := Button.new()

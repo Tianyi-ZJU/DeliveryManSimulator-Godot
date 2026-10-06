@@ -15,15 +15,15 @@ func _run() -> void:
 		print("SMOKE-NODE ", node.name, " ", node.get_class())
 		await process_frame
 		await process_frame
-		var waypoints: Array = node.get("waypoints") as Array
-		var roads: Array = node.get("roads") as Array
+		var waypoints: Array = node.map_model.waypoints as Array
+		var roads: Array = node.map_model.roads as Array
 		if waypoints.size() != 30:
 			push_error("EXPECTED 30 waypoints, GOT %d" % waypoints.size())
 			errors += 1
 		if roads.size() != 93:
 			push_error("EXPECTED 93 roads, GOT %d" % roads.size())
 			errors += 1
-		if node.get("map_texture") == null:
+		if node.assets.map_texture == null:
 			push_error("MAP TEXTURE DID NOT LOAD")
 			errors += 1
 		node.queue_free()

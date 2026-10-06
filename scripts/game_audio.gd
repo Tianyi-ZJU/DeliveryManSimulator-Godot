@@ -15,7 +15,6 @@ const CUE_PATHS := {
 	&"delivery": "res://assets/audio/sfx/delivery.mp3",
 	&"late": "res://assets/audio/sfx/late.mp3",
 	&"boost": "res://assets/audio/sfx/boost.mp3",
-	&"pickup": "res://assets/audio/sfx/button.mp3",
 	&"button": "res://assets/audio/sfx/button.mp3",
 }
 

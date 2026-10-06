@@ -17,15 +17,15 @@ func check(condition: bool, message: String) -> void:
 func reset() -> void:
 	Input.action_release("time_slow")
 	Input.action_release("speed_up")
-	game._restart_game()
-	game.generated_timer = 999.0
+	game.day_cycle.restart()
+	game.state.generated_timer = 999.0
 	cues.clear()
 
 func run() -> void:
 	game = load("res://scenes/Main.tscn").instantiate()
 	root.add_child(game)
 	game.set_process(false)
-	game.generated_timer = 999.0
+	game.state.generated_timer = 999.0
 	await process_frame
 	var audio: Node = game.game_audio
 	audio.cue_started.connect(func(cue: StringName) -> void: cues.append(cue))
@@ -42,28 +42,36 @@ func run() -> void:
 		check(player.stream != null and player.stream.get_length() > 0.0, "Decodable effect: " + String(cue))
 		check(player.bus == &"SFX" and not player.stream.loop, "Effect is a one-shot: " + String(cue))
 
-	var order: Dictionary = game.create_order(14, 21, 1, 46)
-	game._accept_order_at(order["from"])
+	var order: Dictionary = game.order_system.create_order(14, 21, 1, 46)
+	game.order_system.accept_at(order["from"])
 	check(cues == [&"accept"] and audio.effect_players[&"accept"].playing, "Accepting an order starts the original bell")
-	game.capacity = 1
-	var refused: Dictionary = game.create_order(3, 26, 1, 40)
-	game._accept_order_at(refused["from"])
+	game.state.capacity = 1
+	var refused: Dictionary = game.order_system.create_order(3, 26, 1, 40)
+	game.order_system.accept_at(refused["from"])
 	check(cues == [&"accept"], "Refused order does not play acceptance audio")
-	game._arrive_at_target()
-	check(cues == [&"accept", &"pickup"], "Pickup starts its cue")
-	game._arrive_at_target()
-	check(cues == [&"accept", &"pickup", &"delivery"] and audio.effect_players[&"delivery"].playing, "Delivery starts original coin audio")
+	game.order_system.complete_current_task()
+	check(cues == [&"accept"], "Arriving at a restaurant does not play a spurious pickup cue")
+	game.order_system.complete_current_task()
+	check(cues == [&"accept", &"delivery"] and audio.effect_players[&"delivery"].playing, "Delivery starts original coin audio")
 
 	reset()
-	order = game.create_order(14, 21, 1, 46)
-	game._accept_order_at(order["from"])
-	game.clock_minutes = 721
-	game._update_orders(0.0)
+	order = game.order_system.create_order(14, 21, 1, 46)
+	game.order_system.accept_at(order["from"])
+	game.state.wait_order = order
+	game.state.wait_until = game.state.clock_minutes
+	game.order_system.finish_wait_if_ready()
+	check(cues == [&"accept"], "Food becoming ready at a restaurant does not play a pickup cue")
+
+	reset()
+	order = game.order_system.create_order(14, 21, 1, 46)
+	game.order_system.accept_at(order["from"])
+	game.state.clock_minutes = 721
+	game.order_system.update(0.0)
 	check(cues.count(&"late") == 1, "Crossing deadline plays late audio")
-	game._update_orders(0.0)
+	game.order_system.update(0.0)
 	check(cues.count(&"late") == 1, "Late audio does not repeat every frame")
-	game.wait_order = order
-	game.wait_until = 740
+	game.state.wait_order = order
+	game.state.wait_until = 740
 	var urge := InputEventAction.new()
 	urge.action = "urge"
 	urge.pressed = true
@@ -71,24 +79,24 @@ func run() -> void:
 	check(cues.count(&"late") == 2, "Urging plays original voice audio")
 
 	reset()
-	order = game.create_order(14, 21, 1, 46)
-	game._accept_order_at(order["from"])
+	order = game.order_system.create_order(14, 21, 1, 46)
+	game.order_system.accept_at(order["from"])
 	Input.action_press("speed_up")
-	game._update_courier(0.0)
-	game._update_courier(0.0)
+	game.courier.update(0.0, Input.is_action_pressed("speed_up"))
+	game.courier.update(0.0, Input.is_action_pressed("speed_up"))
 	check(cues.count(&"boost") == 1, "Holding Shift plays one acceleration cue")
 	Input.action_release("speed_up")
-	game._update_courier(0.0)
+	game.courier.update(0.0, Input.is_action_pressed("speed_up"))
 	Input.action_press("speed_up")
-	game._update_courier(0.0)
+	game.courier.update(0.0, Input.is_action_pressed("speed_up"))
 	check(cues.count(&"boost") == 2, "Pressing Shift again plays a new cue")
-	game.wait_order = order
-	game._update_courier(0.0)
+	game.state.wait_order = order
+	game.courier.update(0.0, Input.is_action_pressed("speed_up"))
 	check(not audio.boost_active and cues.count(&"boost") == 2, "Waiting at restaurant suppresses boost audio")
 	Input.action_release("speed_up")
 	reset()
 	Input.action_press("speed_up")
-	game._update_courier(0.0)
+	game.courier.update(0.0, Input.is_action_pressed("speed_up"))
 	check(cues.is_empty(), "Idle courier does not play boost audio")
 	Input.action_release("speed_up")
 	Input.action_press("time_slow")
@@ -108,18 +116,18 @@ func run() -> void:
 
 	reset()
 	for next_day in range(2, 6):
-		game._show_upgrade()
+		game.day_cycle.begin_rest()
 		check(not audio.music_player.playing and not audio.boost_active, "Day end stops gameplay audio")
-		game._start_next_day()
+		game.day_cycle.start_next_day()
 		var source := load(audio.DAY_MUSIC[next_day - 1]) as AudioStreamMP3
-		check(game.day == next_day and audio.current_day == next_day and audio.music_player.playing, "Next day plays track " + str(next_day))
+		check(game.state.day == next_day and audio.current_day == next_day and audio.music_player.playing, "Next day plays track " + str(next_day))
 		check(audio.music_player.stream.data == source.data and audio.music_player.stream.loop, "Next day loads and loops the correct original MP3")
 		check(not source.loop, "Loop setting does not alter imported source resource")
-	game._show_end()
+	game.day_cycle.finish_run()
 	check(not audio.music_player.playing, "Final summary stops gameplay music")
 	game._input(mute)
 	check(audio.muted, "Mute input remains usable on the final summary")
-	game._restart_game()
+	game.day_cycle.restart()
 	check(audio.current_day == 1 and audio.music_player.playing and audio.music_player.pitch_scale == 1.0, "New game restarts day one music at normal speed")
 	check(audio.muted and AudioServer.is_bus_mute(music_bus), "Restart preserves the player's mute choice")
 	game._input(mute)

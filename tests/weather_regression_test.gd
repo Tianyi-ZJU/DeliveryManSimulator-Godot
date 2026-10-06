@@ -1,5 +1,7 @@
 extends SceneTree
 
+const GameFixture := preload("res://tests/game_fixture.gd")
+
 const Atmosphere := preload("res://scripts/weather_atmosphere.gd")
 var checks := 0
 var errors := 0
@@ -88,7 +90,7 @@ func run() -> void:
 	var game: Node = load("res://scenes/Main.tscn").instantiate()
 	root.add_child(game)
 	game.set_process(false)
-	game.generated_timer = 999.0
+	game.state.generated_timer = 999.0
 	await process_frame
 	var vfx: RefCounted = game.weather_atmosphere
 	check(vfx.weather == "晴天", "Gameplay initializes sunny decoration")
@@ -100,15 +102,15 @@ func run() -> void:
 	game._process(0.5)
 	Input.action_release("time_slow")
 	check(is_equal_approx(vfx.age - age_before, 0.1), "Ctrl slows decoration with gameplay time")
-	game._show_upgrade()
+	game.day_cycle.begin_rest()
 	check(not vfx.running and vfx.event.is_empty(), "Rest clears weather immediately")
-	game._start_next_day()
-	check(vfx.running and vfx.weather == game.weather and vfx.event.is_empty(), "Next day starts the selected weather cleanly")
+	game.day_cycle.start_next_day()
+	check(vfx.running and vfx.weather == game.state.weather and vfx.event.is_empty(), "Next day starts the selected weather cleanly")
 	vfx.quiet_remaining = 0.0
 	vfx.advance(0.1)
-	game._show_end()
+	game.day_cycle.finish_run()
 	check(not vfx.running and vfx.event.is_empty(), "Final summary clears weather")
-	game._restart_game()
+	game.day_cycle.restart()
 	check(vfx.running and vfx.weather == "晴天" and vfx.event.is_empty(), "Restart resets weather effects")
 
 	if OS.get_cmdline_user_args().has("--capture"):
@@ -121,14 +123,14 @@ func run() -> void:
 
 func capture_and_compare(game: Node) -> void:
 	root.size = Vector2i(1280, 675)
-	game.prepare_input_regression()
-	game._accept_order_at(game.orders[0]["from"])
+	GameFixture.prepare_input(game)
+	game.order_system.accept_at(game.state.orders[0]["from"])
 	game.notifications.clear()
 	await process_frame
 	# Render each event at its plateau, including a marker over the effect.
 	for name: String in Atmosphere.PROFILES:
 		var vfx: RefCounted = game.weather_atmosphere
-		game.weather = name
+		game.state.weather = name
 		vfx.set_running(false)
 		game.queue_redraw()
 		await process_frame
