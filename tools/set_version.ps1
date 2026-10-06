@@ -22,7 +22,7 @@ $targets = @(
     @{file='project.godot'; pattern='(?m)^config/version="[^"\r\n]*"'; value=('config/version="{0}"' -f $requestedVersion)},
     @{file='export_presets.cfg'; pattern='(?m)^application/file_version="[^"\r\n]*"'; value=('application/file_version="{0}.0"' -f $requestedVersion)},
     @{file='export_presets.cfg'; pattern='(?m)^application/product_version="[^"\r\n]*"'; value=('application/product_version="{0}.0"' -f $requestedVersion)},
-    @{file='README.md'; pattern='(?m)(?<=\u5f53\u524d\u7248\u672c\uFF1A\*\*)[^*\r\n]+(?=\*\*)'; value=$requestedVersion}
+    @{file='README.md'; pattern='(?m)^[*][*]v[^*]+[*][*]'; value=('**v{0}**' -f $requestedVersion)}
 )
 $contents = @{}
 foreach ($target in $targets) {

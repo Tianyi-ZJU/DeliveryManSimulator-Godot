@@ -1,81 +1,56 @@
 # Delivery Man Simulator: Godot port
 
-这是 Unity `SampleScene` 的最小可玩迁移，使用 Godot 4.7.2 standard / GDScript / Compatibility renderer。仓库根目录就是 Godot 项目，原 Unity 工程没有包含在此仓库中。
+这是 [Delivery Man Simulator](https://github.com/Ameftn14/DeliveryManSimulator) 的 Godot 迁移版本，使用 Godot 4.7.2、GDScript 和 Compatibility 渲染器。项目保留了原作的地图、订单流程和主要玩法，并以原版道路与标识为基础继续开发。
 
-原 Unity 项目：[Ameftn14/DeliveryManSimulator](https://github.com/Ameftn14/DeliveryManSimulator)。本项目基于原作进行 Godot 迁移，沿用原作的玩法规则、地图、美术标识及音频素材，感谢原项目作者与共同开发者。原项目和素材的权利归属保持不变。
+原作试玩：[Unity Play](https://play.unity.com/en/games/58d8f6b6-778d-412f-b904-34089074b91c/delivery-man-simulator)
 
-当前版本：**0.1.0**。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+## 当前版本
 
-当前运行基线包括：
+**v0.1.0** · 早期可玩迁移版本
 
-- 保存正式 `SampleScene` 的 58 个路口、93 条道路原始数据及背景、摄像机、出生点和标识素材；运行时使用 30 个固定道路地点（含 10 家餐厅）；
-- 订单生成、11 色订单占用、1--5 级订单、接单窗口、指定单和高峰刷新；
-- 点击餐厅或客户接单、容量、任务卡、点击置顶与拖动排序，强制先取餐后送达；
-- 沿背景道路掩码寻路并简化为直线段，订单地点使用固定坐标表；Shift 加速、Ctrl 减速、天气速度和价格影响；
-- 截止时间、迟到扣款、严重超时取消、餐厅等待与空格催餐、随机小费 / 处罚；
-- 四类日末升级、每天最多两次购买、五天结束统计和 Unity 原版评级公式；
-- 背包按 Unity 原版固定两行、按列填充；3 / 4 / 5 格容量均位于右上角背景框内，灰色为空位、蓝色为已接订单占用；
-- 原版五天 BGM 循环播放，接单、取餐、送达、超时、催餐、加速和升级购买音效；Ctrl 减速时音乐变调，M 键切换静音；
-- gdmcp 运行时输入、截图、场景树和实际点击 / 拖动回归验证。
+版本记录见 [CHANGELOG.md](CHANGELOG.md)，版本号来源见 [VERSION](VERSION)。
 
-运行：在 Godot 4.7.2 standard 中打开本目录，按 F6 或 F5。
+## 已支持
 
-每日时间沿用 Unity：10:00 开始，19:00 停止生成新订单，所有订单清空后可点击“收工”或按空格进入日末结算；不操作则在 21:00 后订单清空时自动结算。原版进度条按 22:30 画满，所以停止派单时仍剩约 28%，无需等进度条走满。
+- 原版地图、道路地点和订单标识
+- 1～5 级订单、指定单、热门单和接单时限
+- 取餐、送达、任务排序、背包容量和订单处罚
+- 天气、加速、餐厅等待、催餐和五天流程
+- 日末结算、升级和最终评级
+- 原版 BGM、操作音效、静音和慢速音乐效果
+- 首次遇到天气或特殊订单时的简短提示
 
-19:00 停单时不显示“派单结束／收尾配送”提示框，右侧任务列表保持原位置和完整高度。全部订单与等待清空后显示收工卡片，列出当天送达和净收入；净收入包含当天收入、罚款和小费，不含此前升级支出。第 1～4 天进入升级，第 5 天查看最终成绩。按钮、空格和自动结算共用状态检查，重复请求不会重复创建结算界面。
+## 运行
 
-第 1～4 天的收工后会进入独立休息点：面板展示当天统计、余额、已用升级次数和四项升级的当前 / 下一等级效果。每项升级 $100，每天最多购买两项；购买后停留在休息点，点击“开始下一天”或按空格才会继续，避免购买第二项后突然切换场景。资金不足、升级上限和购买次数耗尽都会在当前面板上给出对应反馈。
-
-左下角反馈统一使用低对比度半透明卡片、状态图标、标题和简短说明；接单、取餐、送达、排序和催餐等已有界面反馈的流程保持静默。最多显示一条短时反馈，等待出餐另有固定提示并实时更新剩余时间；结束或取消等待后立即清除。重复点击有冷却，同类处罚反馈合并单数与金额，重要反馈优先保留。常规刷单和普通未接订单过期不再反复提示。卡片使用真实时间消失，升级界面和 Ctrl 慢时不会让提示停留过久，也不会拦截地图点击；跨天和结算会清理过时反馈。
-
-每种天气、指定单（!）和热门单（火焰）在本局首次遇到时各说明一次，跨天保留遇见记录，重新开局后重置。新天气的速度、接单时限或报酬影响合并进当天开工卡片；特殊订单在生成标记时提示。多种新内容依次显示，处罚可临时打断，结束后恢复未读完的说明。卡片仍保持 280px 宽，不增加常规刷单提示。
-
-`data/map.json` 保留原始 Unity 路网，`data/visual_road_mask.json` 和 `data/visual_waypoints.json` 分别用于运行时寻路和固定订单地点。Godot 的 `.uid` 资源标识文件会提交；编辑器缓存、gdmcp 本地 CLI 和导出文件由 `.gitignore` 排除。
-
-音频位于 `assets/audio/`，素材与原 Unity 工程的对应关系见该目录的 `README.md`。`default_bus_layout.tres` 分开设置 Music（-12 dB）和 SFX（-3 dB），可在 Godot 音频面板调整音量。M 键同时控制两类声音，跨天及重开保留本次运行的静音选择。
-
-## 回归检查
-
-从项目目录执行：
+需要安装 [Godot 4.7.2 Standard](https://godotengine.org/download/archive/4.7.2-stable/)。
 
 ```powershell
-godot --headless --path . --import
-godot --headless --path . --script res://tests/smoke_test.gd
-godot --headless --path . --script res://tests/regression_test.gd
-godot --headless --path . --script res://tests/audio_regression_test.gd
-godot --headless --path . --script res://tests/notification_regression_test.gd
+git clone https://github.com/Tianyi-ZJU/DeliveryManSimulator-Godot.git
+cd DeliveryManSimulator-Godot
 ```
 
-最后一次结果：Godot 规则 / 路径 / 跨天回归 **1065 项通过**，其中包含 870 组独立 Unity 最短路径夹具；30 个运行时地点均通过道路归属检查，并覆盖 19:00 停单、不出现收尾提示框、完整高度任务列表、收工卡片、当天统计、按钮 / 空格结算及重复请求。背包回归还覆盖 3 / 4 / 5 格边界与重叠检查、两次容量升级、跨天清空占用、五单容量限制和取消释放。实机 gdmcp 还验证了真实鼠标点击和空格输入。
-
-音频回归 **51 项通过**，覆盖音效触发、拒单静音、加速按住不重复触发、Ctrl 键映射及音乐变调、静音、五天换曲、结算停止及重开。
-
-提示回归 **69 项通过**，覆盖优先级、重复点击冷却、金额合并、真实时间消失、等待提示底部固定及清除、催餐倒计时、等待结束保留订单数据、处罚金额、升级失败的具体原因和跨天清理；也覆盖四种天气与两类特殊订单首次提示、窄卡片排版、队列、处罚打断后恢复、跨天不重复和重开重置。实机 gdmcp 验证了等待完成、扣款提示、升级按钮反馈，以及游戏暂停于升级界面时提示正常消失，并截图检查全部首次提示。
-
-实机 gdmcp 检查同时验证了 BGM 和接单音效的混音输出，以及真实 M / Ctrl 按键。默认 headless 使用 Dummy 音频驱动；当前 Godot 4.7.2 在退出时可能报告 MP3 播放引用待释放。Windows 下可加 `--audio-driver WASAPI` 检查真实音频驱动，音频回归等待混音线程释放后通过且未出现该退出警告。
-
-## 尚未迁移
-
-启动教程、PlayFab 登录与排行榜、完整 Settlement UI、独立 EndScene 的美术布局和存档尚未纳入这一最小迁移。当前已经迁移了结束统计与评级逻辑；原版启动菜单的独立 BGM 会随菜单迁移接入。
-
-## 版本管理
-
-以 [VERSION](VERSION) 为版本号来源，采用 `主版本.次版本.修订版本`：功能增加更新次版本，问题修复更新修订版本，重大兼容性变化更新主版本。当前仍处于 `0.x` 的迁移阶段。
-
-`main` 保存通过回归的版本；较大的改动可在 `feature/描述` 或 `fix/描述` 分支完成。每次发布使用带说明的 Git 标签 `v版本号`，标签固定对应源码提交。后续改动先记录在 `CHANGELOG.md` 的“未发布”部分。
-
-例如发布下一次修复版本，从项目目录执行：
+用 Godot 导入项目并按 **F6** 或 **F5** 运行。也可以从项目目录执行：
 
 ```powershell
-.\tools\set_version.ps1 -Version 0.1.1
-# 将未发布记录整理为 CHANGELOG.md 中的 0.1.1 条目，并填写实际发布日期。
-.\tools\set_version.ps1 -Check
-# 执行上面的回归检查，全部通过后提交和打标签。
-git add .
-git commit -m "Release v0.1.1"
-git tag -a v0.1.1 -m "Delivery Man Simulator Godot v0.1.1"
-git push origin main
-git push origin v0.1.1
+godot --path . --editor
 ```
 
-同步脚本会更新 `VERSION`、本页版本号、Godot 的 `application/config/version` 和 Windows 导出的文件 / 产品版本（如 `0.1.1.0`）。`-Check` 会核对这些字段及当前版本的更新日志条目。已发布标签保留不变，后续修复使用新的版本号。
+## 操作
+
+| 操作 | 功能 |
+| --- | --- |
+| 鼠标左键 | 接单、取餐、送达和操作界面 |
+| 拖动任务卡 | 调整派送顺序 |
+| Shift | 加速 |
+| Ctrl | 慢速 |
+| Space | 催餐或进入下一天 |
+| M | 静音 / 恢复声音 |
+| Q | 提前结束当前工作日 |
+
+## 项目状态
+
+这是一个持续迁移项目。启动教程、PlayFab 登录与排行榜、完整结算美术、独立结束场景和存档功能尚未迁移。
+
+原项目及其素材的权利归属保持不变；本仓库目前没有为原作素材提供新的再授权许可。使用、修改或再分发相关素材前，请先确认原作者和各素材的许可范围。
+
+开发者可运行 `tools/verify_godot.ps1` 执行完整 Godot 回归检查。详细变更记录见 [CHANGELOG.md](CHANGELOG.md)。
