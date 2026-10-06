@@ -12,6 +12,7 @@
 
 ## 已支持
 
+- 黄昏山脉启动菜单、开始 / 退出和菜单音乐
 - 原版地图、道路地点和订单标识
 - 1～5 级订单、指定单、热门单和接单时限
 - 取餐、送达、任务排序、背包容量和订单处罚
@@ -29,7 +30,7 @@ git clone https://github.com/Tianyi-ZJU/DeliveryManSimulator-Godot.git
 cd DeliveryManSimulator-Godot
 ```
 
-用 Godot 导入项目并按 **F6** 或 **F5** 运行。也可以从项目目录执行：
+用 Godot 导入项目并按 **F5** 从启动菜单运行。也可以从项目目录执行：
 
 ```powershell
 godot --path . --editor
